@@ -96,6 +96,20 @@ class AnthropicToolChoice(BaseModel):
         return self
 
 
+class AnthropicJsonOutputFormat(BaseModel):
+    """JSON output format configuration"""
+
+    json_schema: dict[str, Any] | None = Field(default=None, alias="schema")
+    type: Literal["json_schema"] = "json_schema"
+
+
+class AnthropicOutputConfig(BaseModel):
+    """Configuration options for the model's output, such as the output format."""
+
+    effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
+    format: AnthropicJsonOutputFormat | None = None
+
+
 class AnthropicMessagesRequest(BaseModel):
     """Anthropic Messages API request"""
 
@@ -103,6 +117,7 @@ class AnthropicMessagesRequest(BaseModel):
     messages: list[AnthropicMessage]
     max_tokens: int
     metadata: dict[str, Any] | None = None
+    output_config: AnthropicOutputConfig | None = None
     stop_sequences: list[str] | None = None
     stream: bool | None = False
     system: str | list[AnthropicContentBlock] | None = None
@@ -116,6 +131,13 @@ class AnthropicMessagesRequest(BaseModel):
     kv_transfer_params: dict[str, Any] | None = Field(
         default=None,
         description="KVTransfer parameters used for disaggregated serving.",
+    )
+    chat_template_kwargs: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Additional keyword args to pass to the chat template renderer. "
+            "Will be accessible by the template."
+        ),
     )
 
     @field_validator("model")
@@ -211,6 +233,15 @@ class AnthropicCountTokensRequest(BaseModel):
     system: str | list[AnthropicContentBlock] | None = None
     tool_choice: AnthropicToolChoice | None = None
     tools: list[AnthropicTool] | None = None
+
+    # vLLM-specific fields that are not in Anthropic spec
+    chat_template_kwargs: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Additional keyword args to pass to the chat template renderer. "
+            "Will be accessible by the template."
+        ),
+    )
 
     @field_validator("model")
     @classmethod
