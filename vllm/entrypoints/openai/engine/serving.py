@@ -893,16 +893,24 @@ class OpenAIServing:
                 FunctionCall(name=request.tool_choice.name, arguments=content)
             )
             content = None  # Clear content since tool is called.
-        elif request.tool_choice and isinstance(
-            request.tool_choice, ChatCompletionNamedToolChoiceParam
+        elif (
+            request.tool_choice
+            and isinstance(request.tool_choice, ChatCompletionNamedToolChoiceParam)
+            and (tool_parser_cls is None or tool_parser_cls.supports_required_and_named)
         ):
+            # Named function with standard JSON-based parsing
             assert content is not None
-            # Forced Function Call
             function_calls.append(
-                FunctionCall(name=request.tool_choice.function.name, arguments=content)
+                FunctionCall(
+                    name=request.tool_choice.function.name,
+                    arguments=content,
+                )
             )
             content = None  # Clear content since tool is called.
-        elif request.tool_choice == "required":
+        elif request.tool_choice == "required" and (
+            tool_parser_cls is None or tool_parser_cls.supports_required_and_named
+        ):
+            # "required" with standard JSON-based parsing
             tool_calls = []
             with contextlib.suppress(ValidationError):
                 content = content or ""
@@ -917,10 +925,23 @@ class OpenAIServing:
                     )
                 )
             content = None  # Clear content since tool is called.
-        elif (
-            tool_parser_cls
-            and enable_auto_tools
-            and (request.tool_choice == "auto" or request.tool_choice is None)
+        elif tool_parser_cls and (
+            enable_auto_tools
+            and (
+                request.tool_choice == "auto"
+                or request.tool_choice is None
+                or (
+                    not tool_parser_cls.supports_required_and_named
+                    and request.tools
+                    and (
+                        request.tool_choice == "required"
+                        or isinstance(
+                            request.tool_choice,
+                            ChatCompletionNamedToolChoiceParam,
+                        )
+                    )
+                )
+            )
         ):
             if tokenizer is None:
                 raise ValueError(
