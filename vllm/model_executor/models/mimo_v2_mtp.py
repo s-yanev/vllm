@@ -46,7 +46,7 @@ from .interfaces import (
     _require_is_multimodal,
 )
 from .mimo_v2 import MiMoV2Attention, MiMoV2MLP
-from .utils import _merge_multimodal_embeddings, maybe_prefix
+from .utils import WeightsMapper, _merge_multimodal_embeddings, maybe_prefix
 
 # MiMo-V2 checkpoints contain multiple MTP layers, but vLLM currently supports
 # only the first layer
@@ -216,6 +216,17 @@ class MiMoV2MultiTokenPredictor(nn.Module):
 
 
 class MiMoV2MTP(nn.Module):
+    packed_modules_mapping = {
+        "qkv_proj": ["qkv_proj"],
+        "gate_up_proj": ["gate_proj", "up_proj"],
+    }
+    hf_to_vllm_mapper = WeightsMapper(
+        orig_to_new_prefix={
+            # Undo the Omni target mapper for MTP draft quant metadata only.
+            "language_model.model.mtp.": "model.mtp.",
+        }
+    )
+
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
         super().__init__()
         self.config = vllm_config.model_config.hf_config
@@ -264,7 +275,9 @@ class MiMoV2MTP(nn.Module):
             ("qkv_proj", "v_proj", "v"),
         ]
 
-        params_dict = dict(self.named_parameters())
+        # Keep duplicate aliases such as MXFP8 `weight_scale` /
+        # `weight_scale_inv`; the checkpoint uses the latter.
+        params_dict = dict(self.named_parameters(remove_duplicate=False))
         loaded_params: set[str] = set()
 
         for name, loaded_weight in weights:
@@ -279,17 +292,17 @@ class MiMoV2MTP(nn.Module):
             ):
                 continue
 
-            # Support fused qkv_proj checkpoint (Pro format).
-            # The checkpoint is stored pre-sharded for TP=8 as
-            # [Q_rank0, K_rank0, V_rank0, Q_rank1, ...], so splitting along
-            # dim 0 with chunk(tp_size) gives each rank its Q+K+V slice for
-            # both the FP8 weight and the block weight_scale_inv. This matches
-            # how the main model loads the same layout.
+            # MiMo-V2.5-NVFP4/chimera MTP qkv_proj tensors are canonical
+            # [Q_all][K_all][V_all], not TP-prepacked Pro layout.  Use
+            # QKVParallelLinear.weight_loader for Q/K/V-aware TP slicing of
+            # both FP8 weights and row-aligned MXFP8 weight_scale_inv tensors.
             if "qkv_proj" in name:
                 if name in params_dict:
                     param = params_dict[name]
-                    loaded_weight = loaded_weight.chunk(tp_size, dim=0)[tp_rank]
-                    default_weight_loader(param, loaded_weight)
+                    weight_loader = getattr(
+                        param, "weight_loader", default_weight_loader
+                    )
+                    weight_loader(param, loaded_weight)
                     loaded_params.add(name)
                 continue
 

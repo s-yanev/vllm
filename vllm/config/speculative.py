@@ -343,6 +343,16 @@ class SpeculativeConfig:
                 _MIMO_V2_PRO_NUM_MTP_LAYERS,
             )
 
+            # The raw HF config for some Omni-capable MiMo-V2.5 exports still
+            # says MiMoV2ForCausalLM even though vision/audio config is present.
+            # The target may be resolved to MiMoV2OmniForCausalLM, but the MTP
+            # draft config only sees the raw checkpoint architecture.  Mirror
+            # the official Omni MTP path for such checkpoints.
+            if arch == "MiMoV2ForCausalLM" and getattr(
+                hf_config, "vision_config", None
+            ):
+                arch = "MiMoV2OmniForCausalLM"
+
             mtp_arch_maps = {
                 "MiMoV2ForCausalLM": "MiMoV2MTPModel",
                 "MiMoV2OmniForCausalLM": "MiMoV2OmniMTPModel",

@@ -100,7 +100,7 @@ class MiMoVisionPatchMerger(nn.Module):
             ColumnParallelLinear(
                 self.hidden_size,
                 self.hidden_size,
-                bias=False,
+                bias=True,
                 quant_config=quant_config,
                 prefix=f"{prefix}.mlp.0",
                 return_bias=False,
@@ -110,7 +110,7 @@ class MiMoVisionPatchMerger(nn.Module):
             RowParallelLinear(
                 self.hidden_size,
                 d_model,
-                bias=False,
+                bias=True,
                 quant_config=quant_config,
                 prefix=f"{prefix}.mlp.2",
                 return_bias=False,
@@ -1171,6 +1171,13 @@ class MiMoV2OmniDummyInputsBuilder(BaseDummyInputsBuilder[MiMoV2OmniProcessingIn
     dummy_inputs=MiMoV2OmniDummyInputsBuilder,
 )
 class MiMoV2OmniForCausalLM(nn.Module, SupportsMultiModal, SupportsPP, SupportsQuant):
+    # Ensure ModelOpt mixed-precision resolves fused language/MTP modules after
+    # the Omni hf_to_vllm prefix mapper rewrites model.* -> language_model.model.*.
+    packed_modules_mapping = {
+        "qkv_proj": ["qkv_proj"],
+        "gate_up_proj": ["gate_proj", "up_proj"],
+    }
+
     # To ensure correct weight loading and mapping.
     hf_to_vllm_mapper = WeightsMapper(
         orig_to_new_prefix={
@@ -1483,6 +1490,15 @@ class MiMoV2OmniForCausalLM(nn.Module, SupportsMultiModal, SupportsPP, SupportsQ
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         audio_loaded: set[str] = set()
 
-        loader = AutoWeightsLoader(self, skip_prefixes=["audio_tokenizer."])
+        loader = AutoWeightsLoader(
+            self,
+            skip_prefixes=[
+                "audio_tokenizer.",
+                # After hf_to_vllm_mapper, checkpoint model.mtp.* becomes
+                # language_model.model.mtp.*.  The target model should ignore
+                # it; MiMoV2MTP/OmniMTP loads these weights separately.
+                "language_model.model.mtp.",
+            ],
+        )
         auto_loaded = loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
         return audio_loaded | auto_loaded

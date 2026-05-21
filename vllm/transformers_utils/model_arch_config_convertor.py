@@ -462,7 +462,12 @@ def _strip_mimo_v2_attention_chunk_size(
 
 class MimoV2ModelArchConfigConvertor(ModelArchConfigConvertorBase):
     def __init__(self, hf_config: PretrainedConfig, hf_text_config: PretrainedConfig):
-        if getattr(hf_config, "vision_config", None):
+        # Preserve explicit text-only override for MiMo-V2.5 NVFP4 bring-up.
+        # The checkpoint config includes vision/audio sections, but text-only
+        # serving should use MiMoV2ForCausalLM when requested via hf_overrides.
+        if getattr(hf_config, "vision_config", None) and getattr(
+            hf_config, "architectures", None
+        ) != ["MiMoV2ForCausalLM"]:
             hf_config.architectures = ["MiMoV2OmniForCausalLM"]
         super().__init__(hf_config, hf_text_config)
         _strip_mimo_v2_attention_chunk_size(hf_config, hf_text_config)

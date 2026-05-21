@@ -47,9 +47,7 @@ from vllm.model_executor.model_loader.weight_utils import (
 from vllm.model_executor.models.utils import sequence_parallel_chunk
 from vllm.sequence import IntermediateTensors
 from vllm.v1.attention.backend import AttentionType
-from vllm.v1.attention.backends.flash_attn_diffkv import (
-    FlashAttentionDiffKVBackend,
-)
+from vllm.v1.attention.backends.registry import AttentionBackendEnum
 
 from .interfaces import MixtureOfExperts, SupportsPP
 from .utils import (
@@ -292,11 +290,27 @@ class MiMoV2Attention(nn.Module):
 
         sliding_window = sliding_window_size if sliding_window_size > -1 else None
 
-        # Use DiffKV backend when V has a different head dim than K
+        # Use DiffKV backend when V has a different head dim than K.
+        # Auto-pick FA-DiffKV when FA3/4 is usable on this device, else fall
+        # back to TRITON_ATTN_DIFFKV.  Users can force a choice via
+        # `--attention-backend <FLASH_ATTN_DIFFKV|TRITON_ATTN_DIFFKV>`.
         if self.v_head_dim != self.head_dim:
-            FlashAttentionDiffKVBackend.set_head_size_v(self.v_head_dim)
-            attn_backend = FlashAttentionDiffKVBackend
-            logger.info_once("Using FlashAttentionDiffKVBackend for attention.")
+            requested = get_current_vllm_config().attention_config.backend
+            if requested is not None and requested.name.endswith("_DIFFKV"):
+                backend_enum = requested
+            else:
+                fa_backend = AttentionBackendEnum.FLASH_ATTN_DIFFKV.get_class()
+                if fa_backend.is_supported_on_current_device(
+                    head_size=self.head_dim,
+                    head_size_v=self.v_head_dim,
+                    has_sinks=self.attention_sink_bias is not None,
+                ):
+                    backend_enum = AttentionBackendEnum.FLASH_ATTN_DIFFKV
+                else:
+                    backend_enum = AttentionBackendEnum.TRITON_ATTN_DIFFKV
+            attn_backend = backend_enum.get_class()
+            attn_backend.set_head_size_v(self.v_head_dim)
+            logger.info_once("Using %s for attention.", attn_backend.get_name())
         else:
             attn_backend = None
 
@@ -605,12 +619,23 @@ class MiMoV2Model(nn.Module):
 
             if expert_matched:
                 continue
-            # Support fused qkv_proj checkpoint (Pro format)
+            # MiMo-V2.5-NVFP4/chimera stores fused qkv_proj tensors as
+            # canonical [Q_all][K_all][V_all] (checkpoint metadata says
+            # qkv-deinterleaved), not the native FP8 Pro TP-prepacked layout
+            # [Q0 K0 V0][Q1 K1 V1]...
+            #
+            # A blind chunk(tp_size, dim=0) is shape-correct for TP=2 but
+            # semantically corrupts K/V rows and the row-aligned MXFP8
+            # weight_scale_inv tensors.  Use QKVParallelLinear.weight_loader so
+            # each rank receives [Q_rank][K_rank][V_rank].
             if "qkv_proj" in name:
                 if name in params_dict:
                     param = params_dict[name]
-                    loaded_weight = loaded_weight.chunk(tp_size, dim=0)[tp_rank]
-                    default_weight_loader(param, loaded_weight)
+                    weight_loader = getattr(
+                        param, "weight_loader", default_weight_loader
+                    )
+                    weight_loader(param, loaded_weight)
+                    loaded_params.add(name)
                 continue
             stacked_matched = False
             for param_name, weight_name, shard_id in stacked_params_mapping:
@@ -729,8 +754,20 @@ class MiMoV2FlashForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         return self.model.get_expert_mapping()
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+        def text_only_weights():
+            skip_prefixes = (
+                "visual.",
+                "audio_encoder.",
+                "speech_embeddings.",
+                "model.mtp.",
+            )
+            for name, tensor in weights:
+                if name.startswith(skip_prefixes):
+                    continue
+                yield name, tensor
+
         loader = AutoWeightsLoader(self)
-        return loader.load_weights(weights)
+        return loader.load_weights(text_only_weights())
 
 
 class MiMoV2ForCausalLM(MiMoV2FlashForCausalLM):
