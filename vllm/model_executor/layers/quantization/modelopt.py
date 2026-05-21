@@ -1809,6 +1809,10 @@ class ModelOptMxFp8LinearMethod(LinearMethodBase):
             weight_loader=weight_loader,
         )
         layer.register_parameter("weight_scale", weight_scale)
+        # MiMo-V2.5-NVFP4 checkpoints store MXFP8 microscale as weight_scale_inv.
+        # Expose the same Parameter under both names so named_parameters loading works.
+        if "weight_scale_inv" not in layer._parameters:
+            layer.register_parameter("weight_scale_inv", weight_scale)
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         # Validate weight tensor
@@ -2209,12 +2213,14 @@ class ModelOptMixedPrecisionConfig(ModelOptQuantConfigBase):
         exclude_modules: list[str],
         quantized_layers: dict[str, dict[str, Any]],
         fp8_config: ModelOptFp8Config,
+        mxfp8_config: "ModelOptMxFp8Config",
         nvfp4_config: ModelOptNvFp4Config,
     ) -> None:
         super().__init__(exclude_modules)
         self.kv_cache_quant_method = kv_cache_quant_method
         self.quantized_layers = quantized_layers
         self.fp8_config = fp8_config
+        self.mxfp8_config = mxfp8_config
         self.nvfp4_config = nvfp4_config
 
     def get_name(self) -> QuantizationMethods:
@@ -2275,6 +2281,11 @@ class ModelOptMixedPrecisionConfig(ModelOptQuantConfigBase):
             kv_cache_quant_method=kv_cache_quant_method,
             exclude_modules=[],
         )
+        mxfp8_config = ModelOptMxFp8Config(
+            is_checkpoint_mxfp8_serialized=True,
+            kv_cache_quant_algo=kv_cache_quant_method,
+            exclude_modules=[],
+        )
         nvfp4_config = ModelOptNvFp4Config(
             is_checkpoint_nvfp4_serialized=True,
             kv_cache_quant_algo=kv_cache_quant_method,
@@ -2287,6 +2298,7 @@ class ModelOptMixedPrecisionConfig(ModelOptQuantConfigBase):
             exclude_modules=exclude_modules,
             quantized_layers=quantized_layers,
             fp8_config=fp8_config,
+            mxfp8_config=mxfp8_config,
             nvfp4_config=nvfp4_config,
         )
 
@@ -2352,6 +2364,8 @@ class ModelOptMixedPrecisionConfig(ModelOptQuantConfigBase):
         if isinstance(layer, LinearBase):
             if quant_algo == "FP8":
                 return ModelOptFp8LinearMethod(self.fp8_config)
+            if quant_algo == "MXFP8":
+                return ModelOptMxFp8LinearMethod(self.mxfp8_config)
             if quant_algo == "NVFP4":
                 return ModelOptNvFp4LinearMethod(self.nvfp4_config)
             # Layer not in quantized_layers — leave unquantized
@@ -2361,6 +2375,11 @@ class ModelOptMixedPrecisionConfig(ModelOptQuantConfigBase):
             if quant_algo == "FP8":
                 return ModelOptFp8MoEMethod(
                     quant_config=self.fp8_config,
+                    moe_config=layer.moe_config,
+                )
+            if quant_algo == "MXFP8":
+                return ModelOptMxFp8FusedMoE(
+                    quant_config=self.mxfp8_config,
                     moe_config=layer.moe_config,
                 )
             if quant_algo == "NVFP4":
