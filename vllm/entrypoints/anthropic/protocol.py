@@ -100,6 +100,19 @@ class AnthropicToolChoice(BaseModel):
         return self
 
 
+class AnthropicJSONSchemaFormat(BaseModel):
+    """JSON schema format for structured output."""
+
+    type: Literal["json_schema"]
+    json_schema: dict[str, Any] = Field(alias="schema")
+
+
+class AnthropicOutputConfig(BaseModel):
+    """Output configuration for structured output support."""
+
+    format: AnthropicJSONSchemaFormat | None = None
+
+
 class AnthropicMessagesRequest(BaseModel):
     """Anthropic Messages API request"""
 
@@ -126,6 +139,13 @@ class AnthropicMessagesRequest(BaseModel):
         description=(
             "Additional keyword args to pass to the chat template renderer. "
             "Will be accessible by the template."
+        ),
+    )
+    output_config: AnthropicOutputConfig | None = Field(
+        default=None,
+        description=(
+            "Structured output configuration. "
+            "Only 'json_schema' format is currently supported."
         ),
     )
 

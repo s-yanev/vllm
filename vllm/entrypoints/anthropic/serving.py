@@ -39,6 +39,8 @@ from vllm.entrypoints.openai.chat_completion.protocol import (
 from vllm.entrypoints.openai.chat_completion.serving import OpenAIServingChat
 from vllm.entrypoints.openai.engine.protocol import (
     ErrorResponse,
+    JsonSchemaResponseFormat,
+    ResponseFormat,
     StreamOptions,
 )
 from vllm.entrypoints.openai.models.serving import OpenAIServingModels
@@ -130,6 +132,7 @@ class AnthropicServingMessages(OpenAIServingChat):
         cls._handle_streaming_options(req, anthropic_request)
         cls._convert_tool_choice(anthropic_request, req)
         cls._convert_tools(anthropic_request, req)
+        cls._convert_output_config(anthropic_request, req)
         return req
 
     @classmethod
@@ -429,6 +432,34 @@ class AnthropicServingMessages(OpenAIServingChat):
         if req.tool_choice is None:
             req.tool_choice = "auto"
         req.tools = tools
+
+    @classmethod
+    def _convert_output_config(
+        cls,
+        anthropic_request: AnthropicMessagesRequest | AnthropicCountTokensRequest,
+        req: ChatCompletionRequest,
+    ) -> None:
+        """Convert Anthropic output_config to OpenAI response_format."""
+        if isinstance(anthropic_request, AnthropicCountTokensRequest):
+            return
+        if anthropic_request.output_config is None:
+            return
+
+        fmt = anthropic_request.output_config.format
+        if fmt is None:
+            return
+
+        if fmt.type == "json_schema":
+            req.response_format = ResponseFormat(
+                type="json_schema",
+                json_schema=JsonSchemaResponseFormat.model_validate(
+                    {
+                        "name": "json_schema",
+                        "schema": fmt.json_schema,
+                        "strict": True,
+                    }
+                ),
+            )
 
     async def create_messages(
         self,
