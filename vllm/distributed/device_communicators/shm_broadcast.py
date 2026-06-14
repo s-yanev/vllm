@@ -184,6 +184,9 @@ class SpinCondition:
         """
         assert self.is_reader, "Only readers can wait"
 
+        if timeout_ms is not None and timeout_ms < 0:
+            return  # already expired, don't block
+
         current_time = time.monotonic()
         if current_time <= self.last_read + self.busy_loop_s:
             sched_yield()
