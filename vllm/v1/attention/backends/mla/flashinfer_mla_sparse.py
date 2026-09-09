@@ -215,20 +215,20 @@ class FlashInferMLASparseSM120Backend(_FlashInferMLASparseBackendBase):
                     "FLASHINFER_MLA_SPARSE_SM120 requires a model with "
                     "index_topk config"
                 )
-            # The kernel is instantiated for an index width of exactly 2048,
-            # but what reaches it is the topk BUFFER width: index_topk plus the
-            # kpool always-selected tail (kpool - 1), rounded up to a multiple
-            # of 128 by the indexer's buffer allocation. Validate that
-            # effective width, not the raw config value — e.g. GLM-5.3-Flash's
-            # index_topk=2044 with index_kpool=4 gives 2047 -> 2048, which the
-            # kernel accepts, but the raw value 2044 would be wrongly rejected.
+            # What reaches FlashInfer is the topk BUFFER width: index_topk plus
+            # the kpool always-selected tail (kpool - 1), rounded up to a
+            # multiple of 128. Two GLM configs show up in the wild:
+            # - index_topk=2044, kpool=4 → 2047 → 2048
+            # - index_topk=2048, kpool=4 → 2051 → 2176  (RedHatAI NVFP4)
+            # forward_mqa passes the actual buffer width as sparse_mla_top_k
+            # (#55277); do not require exactly 2048 here.
             kpool = getattr(hf_text_config, "index_kpool", 1) or 1
             eff_width = int(index_topk) + (kpool - 1 if kpool > 1 else 0)
             eff_width = ((eff_width + 127) // 128) * 128
-            if eff_width != 2048:
+            if eff_width not in (2048, 2176):
                 return (
                     "FLASHINFER_MLA_SPARSE_SM120 requires an effective topk "
-                    f"buffer width of 2048; got {eff_width} "
+                    f"buffer width of 2048 or 2176; got {eff_width} "
                     f"(index_topk={index_topk}, index_kpool={kpool})"
                 )
         return None
