@@ -1,0 +1,9 @@
+# SM120 NoPE + effective topk (#53969-style)
+vllm/v1/attention/backends/mla/flashinfer_mla_sparse.py
+vllm/v1/attention/backends/mla/flashinfer_mla_sparse_sm120.py
+# SimpleCPU (#54756) + OffloadingConnector (#54743)
+vllm/v1/simple_kv_offload/worker.py
+vllm/distributed/kv_transfer/kv_connector/v1/offloading/config.py
+vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
+vllm/v1/kv_offload/base.py
+vllm/v1/kv_offload/config.py

@@ -1,0 +1,10 @@
+# All files patched for RTX PRO 6000 (SM120) GLM-5.3-Flash pack.
+# Source: #53969 Python-first + #54756/#54743 offload on pin 9cd956c7e6…
+# Local branch: glm53-flash/rtx-pin
+vllm/v1/attention/backends/mla/flashinfer_mla_sparse.py
+vllm/v1/attention/backends/mla/flashinfer_mla_sparse_sm120.py
+vllm/v1/simple_kv_offload/worker.py
+vllm/distributed/kv_transfer/kv_connector/v1/offloading/config.py
+vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
+vllm/v1/kv_offload/base.py
+vllm/v1/kv_offload/config.py
